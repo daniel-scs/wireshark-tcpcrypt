@@ -367,6 +367,8 @@ static gboolean tcp_exp_options_with_magic = TRUE;
 #define TCPOPT_CORREXP          23      /* SCPS Corruption Experienced */
 #define TCPOPT_QS               27      /* RFC4782 */
 #define TCPOPT_USER_TO          28      /* RFC5482 */
+#define TCPOPT_CRYPT            69      /* tcpcrypt */
+#define TCPOPT_MAC              70      /* tcpcrypt */
 #define TCPOPT_EXP_FD           0xfd    /* Experimental, reserved */
 #define TCPOPT_EXP_FE           0xfe    /* Experimental, reserved */
 /* Non IANA registered option numbers */
@@ -445,6 +447,8 @@ static const value_string tcp_option_kind_vs[] = {
     { TCPOPT_USER_TO, "User Timeout Option" },
     { 29, "TCP Authentication Option" },
     { TCPOPT_MPTCP, "Multipath TCP" },
+    { TCPOPT_CRYPT, "CRYPT" },
+    { TCPOPT_MAC, "MAC" },
     { TCPOPT_RVBD_PROBE, "Riverbed Probe" },
     { TCPOPT_RVBD_TRPY, "Riverbed Transparancy" },
     { TCPOPT_EXP_FD, "RFC3692-style Experiment 1" },
@@ -2684,6 +2688,14 @@ dissect_tcpopt_echo(const ip_tcp_opt *optp, tvbuff_t *tvb,
 
 }
 
+/*
+static void
+dissect_tcpopt_crypt(const ip_tcp_opt *optp _U_, tvbuff_t *tvb _U_,
+    int offset _U_, guint optlen _U_, packet_info *pinfo _U_, proto_tree *opt_tree _U_, void *data _U_)
+{
+}
+*/
+
 /* If set, do not put the TCP timestamp information on the summary line */
 static gboolean tcp_ignore_timestamps = FALSE;
 
@@ -3912,6 +3924,22 @@ static const ip_tcp_opt tcpopts[] = {
         OPT_LEN_FIXED_LENGTH,
         TCPOLEN_USER_TO,
         dissect_tcpopt_user_to
+  },
+  {
+        TCPOPT_CRYPT,
+        "CRYPT",
+        NULL,
+        OPT_LEN_VARIABLE_LENGTH,
+        2,
+        NULL /* dissect_tcpopt_crypt */
+  },
+  {
+        TCPOPT_MAC,
+        "MAC",
+        NULL,
+        OPT_LEN_VARIABLE_LENGTH,
+        2,
+        NULL /* TODO */
   },
   {
         TCPOPT_RVBD_PROBE,
