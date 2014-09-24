@@ -2790,24 +2790,27 @@ dissect_tcpopt_crypt(const ip_tcp_opt *optp _U_, tvbuff_t *tvb,
 
     while (o < o_end) {
         guint8 opcode;
+        const gchar *subopt_name;
+        int subopt_len;
         proto_item *subopt_item;
         proto_tree *subopt;
-        int suboptlen;
 
         opcode = tvb_get_guint8(tvb, o);
-        suboptlen = tcpcrypt_subopt_len(opcode, tvb, o);
+        subopt_name = try_val_to_str_ext(opcode, &tcp_option_crypt_opcode_vs_ext);
+
+        subopt_len = tcpcrypt_subopt_len(opcode, tvb, o);
 
         subopt_item = proto_tree_add_bytes_format(tree, hf_tcp_option_crypt_suboption,
-                        tvb, o, suboptlen ? suboptlen : 1, NULL,
-                        "Subopt 0x%x", opcode);
+                        tvb, o, subopt_len ? subopt_len : 1, NULL,
+                        "%s", subopt_name ? subopt_name : "Unrecognized Suboption");
         subopt = proto_item_add_subtree(subopt_item, ett_tcp_option_crypt_subopt);
 
         proto_tree_add_item(subopt, hf_tcp_option_crypt_opcode, tvb, o, 1, ENC_BIG_ENDIAN);
 
-        if (!suboptlen)
+        if (!subopt_len)
             break;
 
-        o += suboptlen;
+        o += subopt_len;
     }
 }
 
