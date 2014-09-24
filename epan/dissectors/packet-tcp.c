@@ -234,6 +234,8 @@ static int hf_tcp_option_fast_open_cookie_request = -1;
 static int hf_tcp_option_fast_open_cookie = -1;
 static int hf_tcp_option_crypt = -1;
 static int hf_tcp_option_crypt_payload = -1;
+static int hf_tcp_option_crypt_suboption = -1;
+static int hf_tcp_option_crypt_opcode = -1;
 static int hf_tcp_option_mac = -1;
 static int hf_tcp_option_mac_payload = -1;
 
@@ -301,6 +303,8 @@ static gint ett_tcp_opt_echo = -1;
 static gint ett_tcp_opt_cc = -1;
 static gint ett_tcp_opt_qs = -1;
 static gint ett_tcp_option_crypt = -1;
+static gint ett_tcp_option_crypt_subopts = -1;
+static gint ett_tcp_option_crypt_subopt = -1;
 static gint ett_tcp_option_mac = -1;
 
 static expert_field ei_tcp_opt_len_invalid = EI_INIT;
@@ -2694,21 +2698,126 @@ dissect_tcpopt_echo(const ip_tcp_opt *optp, tvbuff_t *tvb,
 
 }
 
+enum tcpcrypt_opcode {
+    TCPCRYPT_HELLO = 1,
+    TCPCRYPT_HELLO_app_support,
+    TCPCRYPT_HELLO_app_mandatory,
+    TCPCRYPT_DECLINE,
+    TCPCRYPT_NEXTK2,
+    TCPCRYPT_NEXTK2_app_support,
+    TCPCRYPT_INIT1,
+    TCPCRYPT_INIT2,
+    TCPCRYPT_PKCONF = 0x41,
+    TCPCRYPT_PKCONF_app_support,
+    TCPCRYPT_UNKNOWN,
+    TCPCRYPT_SYNCOOKIE,
+    TCPCRYPT_ACKCOOKIE,
+    TCPCRYPT_SYNC_REQ = 0x80,
+    TCPCRYPT_SYNC_OK,
+    TCPCRYPT_REKEY,
+    TCPCRYPT_REKEYSTREAM,
+    TCPCRYPT_NEXTK1
+};
+
+static const value_string tcp_option_crypt_opcode_vs[] = {
+    { TCPCRYPT_HELLO,               "HELLO" },
+    { TCPCRYPT_HELLO_app_support,   "HELLO-app-support" },
+    { TCPCRYPT_HELLO_app_mandatory, "HELLO-app-mandatory" },
+    { TCPCRYPT_DECLINE,             "DECLINE" },
+    { TCPCRYPT_NEXTK2,              "NEXTK2" },
+    { TCPCRYPT_NEXTK2_app_support,  "NEXTK2-app-support" },
+    { TCPCRYPT_INIT1,               "INIT1" },
+    { TCPCRYPT_INIT2,               "INIT2" },
+    { TCPCRYPT_PKCONF,              "PKCONF" },
+    { TCPCRYPT_PKCONF_app_support,  "PKCONF-app-support" },
+    { TCPCRYPT_UNKNOWN,             "UNKNOWN" },
+    { TCPCRYPT_SYNCOOKIE,           "SYNCOOKIE" },
+    { TCPCRYPT_ACKCOOKIE,           "ACKCOOKIE" },
+    { TCPCRYPT_SYNC_REQ,            "SYNC_REQ" },
+    { TCPCRYPT_SYNC_OK,             "SYNC_OK" },
+    { TCPCRYPT_REKEY,               "REKEY" },
+    { TCPCRYPT_REKEYSTREAM,         "REKEYSTREAM" },
+    { TCPCRYPT_NEXTK1,              "NEXTK1" },
+    { 0, NULL }
+};
+static value_string_ext tcp_option_crypt_opcode_vs_ext = VALUE_STRING_EXT_INIT(tcp_option_crypt_opcode_vs);
+
+/* return total length of suboption, or zero if unknown */
+static int
+tcpcrypt_subopt_len(guint8 opcode, tvbuff_t *tvb, int offset)
+{
+    if (opcode < 0x40) {
+        return 1;
+    }
+    else if (opcode < 0x80) {
+        return tvb_get_guint8(tvb, offset + 1);
+    }
+    else {
+        switch (opcode) {
+            case TCPCRYPT_SYNC_REQ:
+                return 5;
+            case TCPCRYPT_SYNC_OK:
+                return 5;
+            case TCPCRYPT_REKEY:
+                return 2;
+            case TCPCRYPT_REKEYSTREAM:
+                return 6;
+            case TCPCRYPT_NEXTK1:
+                return 10;
+            default:
+                break;
+        }
+    }
+    return 0;
+}
+
 static void
 dissect_tcpopt_crypt(const ip_tcp_opt *optp _U_, tvbuff_t *tvb,
     int offset, guint optlen, packet_info *pinfo _U_, proto_tree *opt_tree, void *data _U_)
 {
-        proto_item *item;
-        proto_tree *tree;
-        guint paylen = optlen >= 2 ? optlen - 2 : 0;
+    proto_item *item;
+    proto_tree *tree;
+    guint paylen = optlen >= 2 ? optlen - 2 : 0;
+    proto_item *payload = NULL;
 
-        item = proto_tree_add_item(opt_tree, hf_tcp_option_crypt, tvb, offset, optlen, ENC_NA);
-        tree = proto_item_add_subtree(item, ett_tcp_option_crypt);
+    item = proto_tree_add_item(opt_tree, hf_tcp_option_crypt, tvb, offset, optlen, ENC_NA);
+    tree = proto_item_add_subtree(item, ett_tcp_option_crypt);
 
-        proto_tree_add_item(tree, hf_tcp_option_kind, tvb, offset, 1, ENC_NA);
-        proto_tree_add_item(tree, hf_tcp_option_len, tvb, offset + 1, 1, ENC_BIG_ENDIAN);
-        if (paylen > 0)
-            proto_tree_add_bytes_format(tree, hf_tcp_option_crypt_payload, tvb, offset + 2, paylen, NULL, "Payload (%u bytes)", paylen);
+    proto_tree_add_item(tree, hf_tcp_option_kind, tvb, offset, 1, ENC_NA);
+    proto_tree_add_item(tree, hf_tcp_option_len, tvb, offset + 1, 1, ENC_BIG_ENDIAN);
+    if (paylen > 0)
+        payload = proto_tree_add_bytes_format(tree, hf_tcp_option_crypt_payload, tvb, offset + 2, paylen, NULL,
+                                              "Payload (%u bytes)", paylen);
+
+    if (payload) {
+        int o;
+        proto_tree *subopts;
+
+        subopts = proto_item_add_subtree(payload, ett_tcp_option_crypt_subopts);
+
+        o = offset + 2;
+        while (o < offset + (int) optlen) {
+            guint8 opcode;
+            proto_item *subopt_item;
+            proto_tree *subopt;
+            int suboptlen;
+
+            opcode = tvb_get_guint8(tvb, o);
+            suboptlen = tcpcrypt_subopt_len(opcode, tvb, o);
+
+            subopt_item = proto_tree_add_bytes_format(subopts, hf_tcp_option_crypt_suboption,
+                            tvb, o, suboptlen ? suboptlen : 1, NULL,
+                            "Subopt 0x%x", opcode);
+            subopt = proto_item_add_subtree(subopt_item, ett_tcp_option_crypt_subopt);
+
+            proto_tree_add_item(subopt, hf_tcp_option_crypt_opcode, tvb, o, 1, ENC_BIG_ENDIAN);
+
+            if (!suboptlen)
+                break;
+
+            o += suboptlen;
+        }
+    }
 }
 
 static void
@@ -3962,7 +4071,7 @@ static const ip_tcp_opt tcpopts[] = {
   {
         TCPOPT_CRYPT,
         "CRYPT",
-        NULL, /* &ett_tcp_option_crypt */
+        NULL,
         OPT_LEN_VARIABLE_LENGTH,
         2,
         dissect_tcpopt_crypt
@@ -3970,7 +4079,7 @@ static const ip_tcp_opt tcpopts[] = {
   {
         TCPOPT_MAC,
         "MAC",
-        NULL, /* &ett_tcp_option_mac */
+        NULL,
         OPT_LEN_VARIABLE_LENGTH,
         2,
         dissect_tcpopt_mac
@@ -5747,6 +5856,14 @@ proto_register_tcp(void)
           { "CRYPT Payload", "tcp.options.crypt.payload", FT_BYTES,
             BASE_NONE, NULL, 0x0, "Tcpcrypt CRYPT Payload", HFILL}},
 
+        { &hf_tcp_option_crypt_suboption,
+          { "CRYPT Suboption", "tcp.options.crypt.suboption", FT_BYTES,
+            BASE_NONE, NULL, 0x0, "Tcpcrypt CRYPT Suboption", HFILL}},
+
+        { &hf_tcp_option_crypt_opcode,
+          { "Opcode", "tcp.options.crypt.opcode", FT_UINT8,
+            BASE_HEX|BASE_EXT_STRING, &tcp_option_crypt_opcode_vs_ext, 0x0, "CRYPT Opcode", HFILL}},
+
         { &hf_tcp_option_mac,
           { "MAC", "tcp.options.mac", FT_NONE,
             BASE_NONE, NULL, 0x0, "Tcpcrypt MAC Option", HFILL}},
@@ -5828,6 +5945,8 @@ proto_register_tcp(void)
         &ett_tcp_option_sack_perm,
         &ett_tcp_option_mss,
         &ett_tcp_option_crypt,
+        &ett_tcp_option_crypt_subopts,
+        &ett_tcp_option_crypt_subopt,
         &ett_tcp_option_mac,
         &ett_tcp_opt_rvbd_probe,
         &ett_tcp_opt_rvbd_probe_flags,
