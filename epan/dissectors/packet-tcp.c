@@ -232,6 +232,8 @@ static int hf_tcp_option_mptcp_port = -1;
 static int hf_tcp_option_fast_open = -1;
 static int hf_tcp_option_fast_open_cookie_request = -1;
 static int hf_tcp_option_fast_open_cookie = -1;
+static int hf_tcp_option_crypt = -1;
+static int hf_tcp_option_mac = -1;
 
 static int hf_tcp_ts_relative = -1;
 static int hf_tcp_ts_delta = -1;
@@ -296,6 +298,8 @@ static gint ett_tcp_opt_rvbd_trpy_flags = -1;
 static gint ett_tcp_opt_echo = -1;
 static gint ett_tcp_opt_cc = -1;
 static gint ett_tcp_opt_qs = -1;
+static gint ett_tcp_option_crypt = -1;
+static gint ett_tcp_option_mac = -1;
 
 static expert_field ei_tcp_opt_len_invalid = EI_INIT;
 static expert_field ei_tcp_analysis_retransmission = EI_INIT;
@@ -2688,13 +2692,33 @@ dissect_tcpopt_echo(const ip_tcp_opt *optp, tvbuff_t *tvb,
 
 }
 
-/*
 static void
-dissect_tcpopt_crypt(const ip_tcp_opt *optp _U_, tvbuff_t *tvb _U_,
-    int offset _U_, guint optlen _U_, packet_info *pinfo _U_, proto_tree *opt_tree _U_, void *data _U_)
+dissect_tcpopt_crypt(const ip_tcp_opt *optp _U_, tvbuff_t *tvb,
+    int offset, guint optlen, packet_info *pinfo _U_, proto_tree *opt_tree, void *data _U_)
 {
+        proto_item *item;
+        proto_tree *tree;
+
+        tree = proto_tree_add_subtree(opt_tree, tvb, offset, optlen, ett_tcp_option_crypt, &item, "CRYPT");
+        proto_item_append_text(item, " (Payload length: %d)", (int) (optlen >= 2 ? optlen-2 : 0));
+
+        proto_tree_add_item(tree, hf_tcp_option_kind, tvb, offset, 1, ENC_NA);
+        proto_tree_add_item(tree, hf_tcp_option_len, tvb, offset + 1, 1, ENC_BIG_ENDIAN);
 }
-*/
+
+static void
+dissect_tcpopt_mac(const ip_tcp_opt *optp _U_, tvbuff_t *tvb,
+    int offset, guint optlen, packet_info *pinfo _U_, proto_tree *opt_tree, void *data _U_)
+{
+        proto_item *item;
+        proto_tree *tree;
+
+        tree = proto_tree_add_subtree(opt_tree, tvb, offset, optlen, ett_tcp_option_mac, &item, "MAC");
+        proto_item_append_text(item, " (Payload length: %d)", (int) (optlen >= 2 ? optlen-2 : 0));
+
+        proto_tree_add_item(tree, hf_tcp_option_kind, tvb, offset, 1, ENC_NA);
+        proto_tree_add_item(tree, hf_tcp_option_len, tvb, offset + 1, 1, ENC_BIG_ENDIAN);
+}
 
 /* If set, do not put the TCP timestamp information on the summary line */
 static gboolean tcp_ignore_timestamps = FALSE;
@@ -3928,18 +3952,18 @@ static const ip_tcp_opt tcpopts[] = {
   {
         TCPOPT_CRYPT,
         "CRYPT",
-        NULL,
+        NULL, /* &ett_tcp_option_crypt */
         OPT_LEN_VARIABLE_LENGTH,
         2,
-        NULL /* dissect_tcpopt_crypt */
+        dissect_tcpopt_crypt
   },
   {
         TCPOPT_MAC,
         "MAC",
-        NULL,
+        NULL, /* &ett_tcp_option_mac */
         OPT_LEN_VARIABLE_LENGTH,
         2,
-        NULL /* TODO */
+        dissect_tcpopt_mac
   },
   {
         TCPOPT_RVBD_PROBE,
@@ -5705,6 +5729,14 @@ proto_register_tcp(void)
           { "Fast Open Cookie", "tcp.options.tfo.cookie", FT_BYTES,
             BASE_NONE, NULL, 0x0, NULL, HFILL}},
 
+        { &hf_tcp_option_crypt,
+          { "CRYPT", "tcp.options.crypt", FT_NONE,
+            BASE_NONE, NULL, 0x0, "Tcpcrypt CRYPT Option", HFILL}},
+
+        { &hf_tcp_option_mac,
+          { "MAC", "tcp.options.mac", FT_NONE,
+            BASE_NONE, NULL, 0x0, "Tcpcrypt MAC Option", HFILL}},
+
         { &hf_tcp_pdu_time,
           { "Time until the last segment of this PDU", "tcp.pdu.time", FT_RELATIVE_TIME, BASE_NONE, NULL, 0x0,
             "How long time has passed until the last frame of this PDU", HFILL}},
@@ -5777,6 +5809,8 @@ proto_register_tcp(void)
         &ett_tcp_option_exp,
         &ett_tcp_option_sack_perm,
         &ett_tcp_option_mss,
+        &ett_tcp_option_crypt,
+        &ett_tcp_option_mac,
         &ett_tcp_opt_rvbd_probe,
         &ett_tcp_opt_rvbd_probe_flags,
         &ett_tcp_opt_rvbd_trpy,
