@@ -2777,46 +2777,37 @@ dissect_tcpopt_crypt(const ip_tcp_opt *optp _U_, tvbuff_t *tvb,
 {
     proto_item *item;
     proto_tree *tree;
-    guint paylen = optlen >= 2 ? optlen - 2 : 0;
-    proto_item *payload = NULL;
+    int o = offset, o_end = offset + (int) optlen;
 
     item = proto_tree_add_item(opt_tree, hf_tcp_option_crypt, tvb, offset, optlen, ENC_NA);
     tree = proto_item_add_subtree(item, ett_tcp_option_crypt);
 
-    proto_tree_add_item(tree, hf_tcp_option_kind, tvb, offset, 1, ENC_NA);
-    proto_tree_add_item(tree, hf_tcp_option_len, tvb, offset + 1, 1, ENC_BIG_ENDIAN);
-    if (paylen > 0)
-        payload = proto_tree_add_bytes_format(tree, hf_tcp_option_crypt_payload, tvb, offset + 2, paylen, NULL,
-                                              "Payload (%u bytes)", paylen);
+    proto_tree_add_item(tree, hf_tcp_option_kind, tvb, o, 1, ENC_NA);
+    o++;
 
-    if (payload) {
-        int o;
-        proto_tree *subopts;
+    proto_tree_add_item(tree, hf_tcp_option_len, tvb, o, 1, ENC_BIG_ENDIAN);
+    o++;
 
-        subopts = proto_item_add_subtree(payload, ett_tcp_option_crypt_subopts);
+    while (o < o_end) {
+        guint8 opcode;
+        proto_item *subopt_item;
+        proto_tree *subopt;
+        int suboptlen;
 
-        o = offset + 2;
-        while (o < offset + (int) optlen) {
-            guint8 opcode;
-            proto_item *subopt_item;
-            proto_tree *subopt;
-            int suboptlen;
+        opcode = tvb_get_guint8(tvb, o);
+        suboptlen = tcpcrypt_subopt_len(opcode, tvb, o);
 
-            opcode = tvb_get_guint8(tvb, o);
-            suboptlen = tcpcrypt_subopt_len(opcode, tvb, o);
+        subopt_item = proto_tree_add_bytes_format(tree, hf_tcp_option_crypt_suboption,
+                        tvb, o, suboptlen ? suboptlen : 1, NULL,
+                        "Subopt 0x%x", opcode);
+        subopt = proto_item_add_subtree(subopt_item, ett_tcp_option_crypt_subopt);
 
-            subopt_item = proto_tree_add_bytes_format(subopts, hf_tcp_option_crypt_suboption,
-                            tvb, o, suboptlen ? suboptlen : 1, NULL,
-                            "Subopt 0x%x", opcode);
-            subopt = proto_item_add_subtree(subopt_item, ett_tcp_option_crypt_subopt);
+        proto_tree_add_item(subopt, hf_tcp_option_crypt_opcode, tvb, o, 1, ENC_BIG_ENDIAN);
 
-            proto_tree_add_item(subopt, hf_tcp_option_crypt_opcode, tvb, o, 1, ENC_BIG_ENDIAN);
+        if (!suboptlen)
+            break;
 
-            if (!suboptlen)
-                break;
-
-            o += suboptlen;
-        }
+        o += suboptlen;
     }
 }
 
