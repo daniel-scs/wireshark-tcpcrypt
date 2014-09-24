@@ -2699,9 +2699,10 @@ dissect_tcpopt_crypt(const ip_tcp_opt *optp _U_, tvbuff_t *tvb,
         proto_item *item;
         proto_tree *tree;
 
-        tree = proto_tree_add_subtree(opt_tree, tvb, offset, optlen, ett_tcp_option_crypt, &item, "CRYPT");
-        proto_item_append_text(item, " (Payload length: %d)", (int) (optlen >= 2 ? optlen-2 : 0));
+        item = proto_tree_add_item(opt_tree, hf_tcp_option_crypt, tvb, offset, optlen, ENC_NA);
+        tree = proto_item_add_subtree(item, ett_tcp_option_crypt);
 
+        proto_item_append_text(item, " (Payload length: %d)", (int) (optlen >= 2 ? optlen-2 : 0));
         proto_tree_add_item(tree, hf_tcp_option_kind, tvb, offset, 1, ENC_NA);
         proto_tree_add_item(tree, hf_tcp_option_len, tvb, offset + 1, 1, ENC_BIG_ENDIAN);
 }
@@ -2713,9 +2714,10 @@ dissect_tcpopt_mac(const ip_tcp_opt *optp _U_, tvbuff_t *tvb,
         proto_item *item;
         proto_tree *tree;
 
-        tree = proto_tree_add_subtree(opt_tree, tvb, offset, optlen, ett_tcp_option_mac, &item, "MAC");
-        proto_item_append_text(item, " (Payload length: %d)", (int) (optlen >= 2 ? optlen-2 : 0));
+        item = proto_tree_add_item(opt_tree, hf_tcp_option_mac, tvb, offset, optlen, ENC_NA);
+        tree = proto_item_add_subtree(item, ett_tcp_option_mac);
 
+        proto_item_append_text(item, " (Payload length: %d)", (int) (optlen >= 2 ? optlen-2 : 0));
         proto_tree_add_item(tree, hf_tcp_option_kind, tvb, offset, 1, ENC_NA);
         proto_tree_add_item(tree, hf_tcp_option_len, tvb, offset + 1, 1, ENC_BIG_ENDIAN);
 }
