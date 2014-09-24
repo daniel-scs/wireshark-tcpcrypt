@@ -233,7 +233,9 @@ static int hf_tcp_option_fast_open = -1;
 static int hf_tcp_option_fast_open_cookie_request = -1;
 static int hf_tcp_option_fast_open_cookie = -1;
 static int hf_tcp_option_crypt = -1;
+static int hf_tcp_option_crypt_payload = -1;
 static int hf_tcp_option_mac = -1;
+static int hf_tcp_option_mac_payload = -1;
 
 static int hf_tcp_ts_relative = -1;
 static int hf_tcp_ts_delta = -1;
@@ -2698,13 +2700,15 @@ dissect_tcpopt_crypt(const ip_tcp_opt *optp _U_, tvbuff_t *tvb,
 {
         proto_item *item;
         proto_tree *tree;
+        guint paylen = optlen >= 2 ? optlen - 2 : 0;
 
         item = proto_tree_add_item(opt_tree, hf_tcp_option_crypt, tvb, offset, optlen, ENC_NA);
         tree = proto_item_add_subtree(item, ett_tcp_option_crypt);
 
-        proto_item_append_text(item, " (Payload length: %d)", (int) (optlen >= 2 ? optlen-2 : 0));
         proto_tree_add_item(tree, hf_tcp_option_kind, tvb, offset, 1, ENC_NA);
         proto_tree_add_item(tree, hf_tcp_option_len, tvb, offset + 1, 1, ENC_BIG_ENDIAN);
+        if (paylen > 0)
+            proto_tree_add_bytes_format(tree, hf_tcp_option_crypt_payload, tvb, offset + 2, paylen, NULL, "Payload (%u bytes)", paylen);
 }
 
 static void
@@ -2713,13 +2717,17 @@ dissect_tcpopt_mac(const ip_tcp_opt *optp _U_, tvbuff_t *tvb,
 {
         proto_item *item;
         proto_tree *tree;
+        guint paylen = optlen >= 2 ? optlen - 2 : 0;
 
         item = proto_tree_add_item(opt_tree, hf_tcp_option_mac, tvb, offset, optlen, ENC_NA);
         tree = proto_item_add_subtree(item, ett_tcp_option_mac);
 
-        proto_item_append_text(item, " (Payload length: %d)", (int) (optlen >= 2 ? optlen-2 : 0));
+        proto_item_append_text(item, " (Payload length: %u)", paylen);
         proto_tree_add_item(tree, hf_tcp_option_kind, tvb, offset, 1, ENC_NA);
         proto_tree_add_item(tree, hf_tcp_option_len, tvb, offset + 1, 1, ENC_BIG_ENDIAN);
+
+        if (paylen > 0)
+            proto_tree_add_item(tree, hf_tcp_option_mac_payload, tvb, offset + 2, paylen, ENC_STR_HEX);
 }
 
 /* If set, do not put the TCP timestamp information on the summary line */
@@ -5735,9 +5743,17 @@ proto_register_tcp(void)
           { "CRYPT", "tcp.options.crypt", FT_NONE,
             BASE_NONE, NULL, 0x0, "Tcpcrypt CRYPT Option", HFILL}},
 
+        { &hf_tcp_option_crypt_payload,
+          { "CRYPT Payload", "tcp.options.crypt.payload", FT_BYTES,
+            BASE_NONE, NULL, 0x0, "Tcpcrypt CRYPT Payload", HFILL}},
+
         { &hf_tcp_option_mac,
           { "MAC", "tcp.options.mac", FT_NONE,
             BASE_NONE, NULL, 0x0, "Tcpcrypt MAC Option", HFILL}},
+
+        { &hf_tcp_option_mac_payload,
+          { "MAC Payload", "tcp.options.mac.payload", FT_BYTES,
+            BASE_NONE, NULL, 0x0, "Tcpcrypt MAC Payload", HFILL}},
 
         { &hf_tcp_pdu_time,
           { "Time until the last segment of this PDU", "tcp.pdu.time", FT_RELATIVE_TIME, BASE_NONE, NULL, 0x0,
