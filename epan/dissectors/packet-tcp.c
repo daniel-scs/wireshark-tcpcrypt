@@ -236,6 +236,8 @@ static int hf_tcp_option_crypt = -1;
 static int hf_tcp_option_crypt_payload = -1;
 static int hf_tcp_option_crypt_suboption = -1;
 static int hf_tcp_option_crypt_opcode = -1;
+static int hf_tcp_option_crypt_subopt_payload = -1;
+static int hf_tcp_option_crypt_subopt_len = -1;
 static int hf_tcp_option_mac = -1;
 static int hf_tcp_option_mac_payload = -1;
 
@@ -2742,15 +2744,18 @@ static const value_string tcp_option_crypt_opcode_vs[] = {
 };
 static value_string_ext tcp_option_crypt_opcode_vs_ext = VALUE_STRING_EXT_INIT(tcp_option_crypt_opcode_vs);
 
-/* return total length of suboption, or zero if unknown */
+/* return total length of suboption, or 0 if unknown */
 static int
-tcpcrypt_subopt_len(guint8 opcode, tvbuff_t *tvb, int offset)
+tcpcrypt_subopt_len(guint8 opcode, tvbuff_t *tvb, int offset, int *len_offset)
 {
+    *len_offset = 0;
+
     if (opcode < 0x40) {
         return 1;
     }
     else if (opcode < 0x80) {
-        return tvb_get_guint8(tvb, offset + 1);
+        *len_offset = offset + 1;
+        return tvb_get_guint8(tvb, *len_offset);
     }
     else {
         switch (opcode) {
@@ -2791,14 +2796,19 @@ dissect_tcpopt_crypt(const ip_tcp_opt *optp _U_, tvbuff_t *tvb,
     while (o < o_end) {
         guint8 opcode;
         const gchar *subopt_name;
-        int subopt_len;
+        int subopt_len, subopt_len_offset, subopt_payload_offset, subopt_payload_len;
         proto_item *subopt_item;
         proto_tree *subopt;
 
         opcode = tvb_get_guint8(tvb, o);
         subopt_name = try_val_to_str_ext(opcode, &tcp_option_crypt_opcode_vs_ext);
 
-        subopt_len = tcpcrypt_subopt_len(opcode, tvb, o);
+        subopt_len = tcpcrypt_subopt_len(opcode, tvb, o, &subopt_len_offset);
+
+        subopt_payload_offset = subopt_len_offset ? subopt_len_offset + 1 : o + 1;
+        subopt_payload_len = subopt_len ? (subopt_len_offset ? subopt_len - 2
+                                                             : subopt_len - 1)
+                                        : 0;
 
         subopt_item = proto_tree_add_bytes_format(tree, hf_tcp_option_crypt_suboption,
                         tvb, o, subopt_len ? subopt_len : 1, NULL,
@@ -2807,8 +2817,15 @@ dissect_tcpopt_crypt(const ip_tcp_opt *optp _U_, tvbuff_t *tvb,
 
         proto_tree_add_item(subopt, hf_tcp_option_crypt_opcode, tvb, o, 1, ENC_BIG_ENDIAN);
 
+        if (subopt_len_offset)
+            proto_tree_add_item(subopt, hf_tcp_option_crypt_subopt_len, tvb, subopt_len_offset, 1, ENC_BIG_ENDIAN);
+
         if (!subopt_len)
             break;
+
+        if (subopt_payload_len > 0)
+            proto_tree_add_bytes_format_value(subopt, hf_tcp_option_crypt_subopt_payload,
+                tvb, subopt_payload_offset, subopt_payload_len, NULL, "%d bytes", subopt_payload_len);
 
         o += subopt_len;
     }
@@ -5857,6 +5874,14 @@ proto_register_tcp(void)
         { &hf_tcp_option_crypt_opcode,
           { "Opcode", "tcp.options.crypt.opcode", FT_UINT8,
             BASE_HEX|BASE_EXT_STRING, &tcp_option_crypt_opcode_vs_ext, 0x0, "CRYPT Opcode", HFILL}},
+
+        { &hf_tcp_option_crypt_subopt_len,
+          { "Length", "tcp.options.crypt.subopt.len", FT_UINT8,
+            BASE_DEC, NULL, 0x0, "Tcpcrypt CRYPT Suboption Length", HFILL}},
+
+        { &hf_tcp_option_crypt_subopt_payload,
+          { "Payload", "tcp.options.crypt.subopt.payload", FT_BYTES,
+            BASE_NONE, NULL, 0x0, "Tcprypt CRYPT Suboption Payload", HFILL}},
 
         { &hf_tcp_option_mac,
           { "MAC", "tcp.options.mac", FT_NONE,
