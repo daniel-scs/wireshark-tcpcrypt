@@ -232,12 +232,15 @@ static int hf_tcp_option_mptcp_port = -1;
 static int hf_tcp_option_fast_open = -1;
 static int hf_tcp_option_fast_open_cookie_request = -1;
 static int hf_tcp_option_fast_open_cookie = -1;
+
 static int hf_tcp_option_crypt = -1;
 static int hf_tcp_option_crypt_payload = -1;
 static int hf_tcp_option_crypt_suboption = -1;
 static int hf_tcp_option_crypt_opcode = -1;
 static int hf_tcp_option_crypt_subopt_payload = -1;
 static int hf_tcp_option_crypt_subopt_len = -1;
+static int hf_tcp_option_crypt_extra = -1;
+static int hf_tcp_option_crypt_alg = -1;
 static int hf_tcp_option_mac = -1;
 static int hf_tcp_option_mac_payload = -1;
 
@@ -2776,6 +2779,44 @@ tcpcrypt_subopt_len(guint8 opcode, tvbuff_t *tvb, int offset, int *len_offset)
     return 0;
 }
 
+static const value_string tcp_option_crypt_alg_vs[] = {
+    { 0x000100, "OAEP+-RSA (2048/4096 bits)" },
+    { 0x000101, "OAEP+-RSA (4096/8192 bits)" },
+    { 0x000102, "OAEP+-RSA (8192/16384 bits)" },
+    { 0x000103, "OAEP+-RSA (16384 bits)" },
+    { 0x000200, "ECDHE-P256" },
+    { 0x000201, "ECDHE-P521" },
+    { 0, NULL }
+};
+static value_string_ext tcp_option_crypt_alg_vs_ext = VALUE_STRING_EXT_INIT(tcp_option_crypt_alg_vs);
+
+/* return zero to request default subopt handling */
+static int
+dissect_tcpopt_crypt_subopt(guint8 opcode, tvbuff_t *tvb, int offset, guint len, proto_tree *tree)
+{
+    switch (opcode) {
+    case TCPCRYPT_PKCONF:
+    case TCPCRYPT_PKCONF_app_support:
+        {
+            int o = offset, o_end = offset + len;
+
+            /* display the algorithms indicated by 3-byte identifiers: */
+            while (o + 3 <= o_end) {
+                proto_tree_add_item(tree, hf_tcp_option_crypt_alg, tvb, o, 3, ENC_NA);
+                o += 3;
+            }
+            /* indicate any trailing bytes */
+            if (o < o_end)
+                proto_tree_add_bytes_format(tree, hf_tcp_option_crypt_extra,
+                    tvb, o, o_end - o, NULL,
+                    "%s", "Unexpected bytes");
+
+            return 1;
+        }
+    }
+    return 0;
+}
+
 static void
 dissect_tcpopt_crypt(const ip_tcp_opt *optp _U_, tvbuff_t *tvb,
     int offset, guint optlen, packet_info *pinfo _U_, proto_tree *opt_tree, void *data _U_)
@@ -2823,12 +2864,16 @@ dissect_tcpopt_crypt(const ip_tcp_opt *optp _U_, tvbuff_t *tvb,
         if (!subopt_len)
             break;
 
-        if (subopt_payload_len > 0)
-            proto_tree_add_bytes_format_value(subopt, hf_tcp_option_crypt_subopt_payload,
-                tvb, subopt_payload_offset, subopt_payload_len, NULL, "%d bytes", subopt_payload_len);
+        if (!dissect_tcpopt_crypt_subopt(opcode, tvb, subopt_payload_offset, subopt_payload_len, subopt)) {
+            /* indicate the suboption payload in a generic way */
+            if (subopt_payload_len > 0)
+                proto_tree_add_bytes_format_value(subopt, hf_tcp_option_crypt_subopt_payload,
+                    tvb, subopt_payload_offset, subopt_payload_len, NULL, "%d bytes", subopt_payload_len);
+        }
 
         o += subopt_len;
     }
+
 }
 
 static void
@@ -5882,6 +5927,14 @@ proto_register_tcp(void)
         { &hf_tcp_option_crypt_subopt_payload,
           { "Payload", "tcp.options.crypt.subopt.payload", FT_BYTES,
             BASE_NONE, NULL, 0x0, "Tcprypt CRYPT Suboption Payload", HFILL}},
+
+        { &hf_tcp_option_crypt_extra,
+          { "Extra Bytes", "tcp.options.crypt.extra", FT_BYTES,
+            BASE_NONE, NULL, 0x0, "Tcprypt CRYPT Suboption Extra Bytes", HFILL}},
+
+        { &hf_tcp_option_crypt_alg,
+          { "Algorithm", "tcp.options.crypt.alg", FT_UINT24,
+            BASE_HEX|BASE_EXT_STRING, &tcp_option_crypt_alg_vs_ext, 0x0, "CRYPT Algorithm", HFILL}},
 
         { &hf_tcp_option_mac,
           { "MAC", "tcp.options.mac", FT_NONE,
