@@ -240,6 +240,8 @@ static int hf_tcp_option_crypt_opcode = -1;
 static int hf_tcp_option_crypt_subopt_payload = -1;
 static int hf_tcp_option_crypt_subopt_len = -1;
 static int hf_tcp_option_crypt_extra = -1;
+static int hf_tcp_option_crypt_magic = -1;
+static int hf_tcp_option_crypt_init_len = -1;
 static int hf_tcp_option_crypt_alg = -1;
 static int hf_tcp_option_mac = -1;
 static int hf_tcp_option_mac_payload = -1;
@@ -2747,6 +2749,15 @@ static const value_string tcp_option_crypt_opcode_vs[] = {
 };
 static value_string_ext tcp_option_crypt_opcode_vs_ext = VALUE_STRING_EXT_INIT(tcp_option_crypt_opcode_vs);
 
+#define TCPCRYPT_INIT1_MAGIC 0x15101a0e
+#define TCPCRYPT_INIT2_MAGIC 0x097105e0
+
+static const value_string tcp_option_crypt_magic_vs[] = {
+    { TCPCRYPT_INIT1_MAGIC, "INIT1_MAGIC" },
+    { TCPCRYPT_INIT2_MAGIC, "INIT2_MAGIC" },
+    { 0, NULL }
+};
+
 /* return total length of suboption, or 0 if unknown */
 static int
 tcpcrypt_subopt_len(guint8 opcode, tvbuff_t *tvb, int offset, int *len_offset)
@@ -2792,7 +2803,7 @@ static value_string_ext tcp_option_crypt_alg_vs_ext = VALUE_STRING_EXT_INIT(tcp_
 
 /* return zero to request default subopt handling */
 static int
-dissect_tcpopt_crypt_subopt(guint8 opcode, tvbuff_t *tvb, int offset, guint len, proto_tree *tree)
+dissect_tcpopt_crypt_subopt(guint8 opcode, tvbuff_t *tvb, int offset, guint len, proto_tree *tree, struct tcpheader *tcph)
 {
     switch (opcode) {
     case TCPCRYPT_PKCONF:
@@ -2813,16 +2824,40 @@ dissect_tcpopt_crypt_subopt(guint8 opcode, tvbuff_t *tvb, int offset, guint len,
 
             return 1;
         }
+    case TCPCRYPT_INIT1:
+    case TCPCRYPT_INIT2:
+        {
+            int o, init_offset = tcph->th_hlen;
+            guint32 init_len;
+
+            o = init_offset;
+
+            proto_tree_add_item(tree, hf_tcp_option_crypt_magic, tvb, o, 4, ENC_NA);
+            o += 4;
+
+            init_len = tvb_get_ntohl(tvb, o);
+            proto_tree_add_item(tree, hf_tcp_option_crypt_init_len, tvb, o, 4, ENC_BIG_ENDIAN);
+            o += 4;
+
+            {
+            guint init_len_actual = 8 + tvb_captured_length_remaining(tvb, o);
+            proto_tree_add_bytes_format(tree, hf_tcp_option_crypt_extra, tvb, init_offset, init_len_actual, NULL,
+                "INIT Structure (%u bytes claimed) (%u bytes actual)", init_len, init_len_actual);
+            }
+
+            return 1;
+        }
     }
     return 0;
 }
 
 static void
 dissect_tcpopt_crypt(const ip_tcp_opt *optp _U_, tvbuff_t *tvb,
-    int offset, guint optlen, packet_info *pinfo _U_, proto_tree *opt_tree, void *data _U_)
+    int offset, guint optlen, packet_info *pinfo _U_, proto_tree *opt_tree, void *data)
 {
     proto_item *item;
     proto_tree *tree;
+    struct tcpheader *tcph = (struct tcpheader *)data;
     int o = offset, o_end = offset + (int) optlen;
 
     item = proto_tree_add_item(opt_tree, hf_tcp_option_crypt, tvb, offset, optlen, ENC_NA);
@@ -2864,7 +2899,7 @@ dissect_tcpopt_crypt(const ip_tcp_opt *optp _U_, tvbuff_t *tvb,
         if (!subopt_len)
             break;
 
-        if (!dissect_tcpopt_crypt_subopt(opcode, tvb, subopt_payload_offset, subopt_payload_len, subopt)) {
+        if (!dissect_tcpopt_crypt_subopt(opcode, tvb, subopt_payload_offset, subopt_payload_len, subopt, tcph)) {
             /* indicate the suboption payload in a generic way */
             if (subopt_payload_len > 0)
                 proto_tree_add_bytes_format_value(subopt, hf_tcp_option_crypt_subopt_payload,
@@ -5931,6 +5966,14 @@ proto_register_tcp(void)
         { &hf_tcp_option_crypt_extra,
           { "Extra Bytes", "tcp.options.crypt.extra", FT_BYTES,
             BASE_NONE, NULL, 0x0, "Tcprypt CRYPT Suboption Extra Bytes", HFILL}},
+
+        { &hf_tcp_option_crypt_magic,
+          { "Magic", "tcp.options.crypt.magic", FT_UINT32,
+            BASE_HEX, VALS(tcp_option_crypt_magic_vs), 0x0, "Tcprypt CRYPT Magic", HFILL}},
+
+        { &hf_tcp_option_crypt_init_len,
+          { "INIT Structure Length", "tcp.options.crypt.init.len", FT_UINT32,
+            BASE_DEC, NULL, 0x0, "Tcpcrypt CRYPT INIT Structure Length", HFILL}},
 
         { &hf_tcp_option_crypt_alg,
           { "Algorithm", "tcp.options.crypt.alg", FT_UINT24,
