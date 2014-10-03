@@ -240,9 +240,15 @@ static int hf_tcp_option_crypt_opcode = -1;
 static int hf_tcp_option_crypt_subopt_payload = -1;
 static int hf_tcp_option_crypt_subopt_len = -1;
 static int hf_tcp_option_crypt_extra = -1;
+static int hf_tcp_option_crypt_key = -1;
 static int hf_tcp_option_crypt_magic = -1;
 static int hf_tcp_option_crypt_init_len = -1;
 static int hf_tcp_option_crypt_alg = -1;
+static int hf_tcp_option_crypt_numciphers = -1;
+static int hf_tcp_option_crypt_symcipher = -1;
+static int hf_tcp_option_crypt_n_c = -1;
+static int hf_tcp_option_crypt_pk_c = -1;
+
 static int hf_tcp_option_mac = -1;
 static int hf_tcp_option_mac_payload = -1;
 
@@ -2791,15 +2797,23 @@ tcpcrypt_subopt_len(guint8 opcode, tvbuff_t *tvb, int offset, int *len_offset)
 }
 
 static const value_string tcp_option_crypt_alg_vs[] = {
-    { 0x000100, "OAEP+-RSA (2048/4096 bits)" },
-    { 0x000101, "OAEP+-RSA (4096/8192 bits)" },
-    { 0x000102, "OAEP+-RSA (8192/16384 bits)" },
-    { 0x000103, "OAEP+-RSA (16384 bits)" },
+    { 0x000100, "OAEP+-RSA, 2048/4096 bits" },
+    { 0x000101, "OAEP+-RSA, 4096/8192 bits" },
+    { 0x000102, "OAEP+-RSA, 8192/16384 bits" },
+    { 0x000103, "OAEP+-RSA, 16384 bits" },
     { 0x000200, "ECDHE-P256" },
     { 0x000201, "ECDHE-P521" },
     { 0, NULL }
 };
 static value_string_ext tcp_option_crypt_alg_vs_ext = VALUE_STRING_EXT_INIT(tcp_option_crypt_alg_vs);
+
+static const value_string tcp_option_crypt_symcipher_vs[] = {
+    { 0x00000100, "AES-128 | HMAC-SHA-256-128 | AES-128" },
+    { 0x00000200, "AES-128 | Poly1305-AES-128 | AES-128" },
+    { 0x00000300, "AES-128 | CMAC-AES-128 | AES-128" },
+    { 0, NULL }
+};
+static value_string_ext tcp_option_crypt_symcipher_vs_ext = VALUE_STRING_EXT_INIT(tcp_option_crypt_symcipher_vs);
 
 /* return zero to request default subopt handling */
 static int
@@ -2827,24 +2841,75 @@ dissect_tcpopt_crypt_subopt(guint8 opcode, tvbuff_t *tvb, int offset, guint len,
     case TCPCRYPT_INIT1:
     case TCPCRYPT_INIT2:
         {
-            int o, init_offset = tcph->th_hlen;
+            int init_offset, init_end, o;
             guint32 init_len;
+
+            /* INIT1 and INIT2 structures start at beginning of TCP segment payload */
+            init_offset = tcph->th_hlen;
 
             o = init_offset;
 
+            /* magic */
             proto_tree_add_item(tree, hf_tcp_option_crypt_magic, tvb, o, 4, ENC_NA);
             o += 4;
 
+            /* length (of entire INIT structure) */
             init_len = tvb_get_ntohl(tvb, o);
+            init_end = init_offset + init_len;
             proto_tree_add_item(tree, hf_tcp_option_crypt_init_len, tvb, o, 4, ENC_BIG_ENDIAN);
             o += 4;
 
-            {
-            guint init_len_actual = 8 + tvb_captured_length_remaining(tvb, o);
-            proto_tree_add_bytes_format(tree, hf_tcp_option_crypt_extra, tvb, init_offset, init_len_actual, NULL,
-                "INIT Structure (%u bytes claimed) (%u bytes actual)", init_len, init_len_actual);
+            proto_tree_add_bytes_format(tree, hf_tcp_option_crypt_extra, tvb, init_offset, init_len, NULL, "Init Structure (%u bytes)", init_len);
+ 
+            if (opcode == TCPCRYPT_INIT1) {
+                guint16 num_ciphers;
+                unsigned n_len, pk_len;
+
+                /* zero byte */
+                o++;
+
+                /* pub-cipher */
+                proto_tree_add_item(tree, hf_tcp_option_crypt_alg, tvb, o, 3, ENC_NA);
+                o += 3;
+
+                /* zero bytes */
+                o += 2;
+
+                /* num sym-ciphers */
+                num_ciphers = tvb_get_ntohs(tvb, o);
+                proto_tree_add_item(tree, hf_tcp_option_crypt_numciphers, tvb, o, 2, ENC_BIG_ENDIAN);
+                o += 2;
+
+                /* sym-cipher-list */
+                while (num_ciphers--) {
+                    proto_tree_add_item(tree, hf_tcp_option_crypt_symcipher, tvb, o, 4, ENC_BIG_ENDIAN);
+                    o += 4;
+                }
+
+                /* N_C */
+                n_len = 32;    /* depends on cipher suite specified above, but currently always 32 bytes */
+                proto_tree_add_bytes_format(tree, hf_tcp_option_crypt_n_c, tvb, o, n_len, NULL, "N_C (%u bytes)", n_len);
+                o += n_len;
+
+                /* PK_C */
+                pk_len = 32;    /* depends on cipher suite specified above, but currently always 32 bytes */
+                proto_tree_add_bytes_format(tree, hf_tcp_option_crypt_pk_c, tvb, o, pk_len, NULL, "PK_C (%u bytes)", pk_len);
+                o += pk_len;
+            }
+            else { /* opcode == TCPCRYPT_INIT2 */
+                guint32 key_len;
+
+                /* sym-cipher */
+                proto_tree_add_item(tree, hf_tcp_option_crypt_symcipher, tvb, o, 4, ENC_BIG_ENDIAN);
+                o += 4;
+
+                /* key material */
+                key_len = init_end - o;
+                proto_tree_add_bytes_format(tree, hf_tcp_option_crypt_key, tvb, o, key_len, NULL, "Key Material (%u bytes)", key_len);
+                o += key_len;
             }
 
+            DISSECTOR_ASSERT_CMPINT(o, ==, init_end);
             return 1;
         }
     }
@@ -5967,6 +6032,10 @@ proto_register_tcp(void)
           { "Extra Bytes", "tcp.options.crypt.extra", FT_BYTES,
             BASE_NONE, NULL, 0x0, "Tcprypt CRYPT Suboption Extra Bytes", HFILL}},
 
+        { &hf_tcp_option_crypt_key,
+          { "Key Material", "tcp.options.crypt.key", FT_BYTES,
+            BASE_NONE, NULL, 0x0, "Tcprypt CRYPT Key Material", HFILL}},
+
         { &hf_tcp_option_crypt_magic,
           { "Magic", "tcp.options.crypt.magic", FT_UINT32,
             BASE_HEX, VALS(tcp_option_crypt_magic_vs), 0x0, "Tcprypt CRYPT Magic", HFILL}},
@@ -5978,6 +6047,22 @@ proto_register_tcp(void)
         { &hf_tcp_option_crypt_alg,
           { "Algorithm", "tcp.options.crypt.alg", FT_UINT24,
             BASE_HEX|BASE_EXT_STRING, &tcp_option_crypt_alg_vs_ext, 0x0, "CRYPT Algorithm", HFILL}},
+        
+        { &hf_tcp_option_crypt_numciphers,
+          { "Num Ciphers", "tcp.options.crypt.numciphers", FT_UINT16,
+            BASE_DEC, NULL, 0x0, "Tcpcrypt CRYPT Num Ciphers", HFILL}},
+
+        { &hf_tcp_option_crypt_symcipher,
+          { "Symmetric Cipher", "tcp.options.crypt.symcipher", FT_UINT32,
+            BASE_HEX|BASE_EXT_STRING, &tcp_option_crypt_symcipher_vs_ext, 0x0, "Tcpcrypt CRYPT Symmetric Cipher", HFILL}},
+
+        { &hf_tcp_option_crypt_n_c,
+          { "N_C", "tcp.options.crypt.n_c", FT_BYTES,
+            BASE_NONE, NULL, 0x0, "Tcprypt CRYPT N_C", HFILL}},
+
+        { &hf_tcp_option_crypt_pk_c,
+          { "PK_C", "tcp.options.crypt.pk_c", FT_BYTES,
+            BASE_NONE, NULL, 0x0, "Tcprypt CRYPT PK_C", HFILL}},
 
         { &hf_tcp_option_mac,
           { "MAC", "tcp.options.mac", FT_NONE,
